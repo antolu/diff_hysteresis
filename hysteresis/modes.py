@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from torch.nn import Module
 
 FITTING = 0
@@ -11,12 +13,12 @@ class ModeModule(Module):
     _mode = FITTING
 
     @property
-    def mode(self):
+    def mode(self) -> int:
         return self._mode
 
     @mode.setter
-    def mode(self, value):
-        assert value in [REGRESSION, NEXT, FUTURE, FITTING, CURRENT]
+    def mode(self, value: int) -> None:
+        assert value in {REGRESSION, NEXT, FUTURE, FITTING, CURRENT}
         self._mode = value
 
         # if mode is FITTING set module to training.py
@@ -29,17 +31,17 @@ class ModeModule(Module):
             if isinstance(ele, ModeModule):
                 ele.mode = value
 
-    def fitting(self):
+    def fitting(self) -> None:
         self.mode = FITTING
 
-    def regression(self):
+    def regression(self) -> None:
         self.mode = REGRESSION
 
-    def next(self):
+    def next(self) -> None:
         self.mode = NEXT
 
-    def future(self):
+    def future(self) -> None:
         self.mode = FUTURE
 
-    def current(self):
+    def current(self) -> None:
         self.mode = CURRENT

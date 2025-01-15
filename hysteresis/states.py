@@ -1,47 +1,74 @@
+from __future__ import annotations
+
+import typing
+
 import torch
 
 
-def sweep_up(h, mesh, initial_state, T=1e-2):
-    return torch.minimum(
-        initial_state + switch(h, mesh[:, 1], T), torch.ones_like(mesh[:, 1])
-    )
-
-
-def sweep_left(h, mesh, initial_state, T=1e-2):
-    return torch.maximum(
-        initial_state - switch(mesh[:, 0], h, T), torch.ones_like(mesh[:, 0]) * -1.0
-    )
-
-
-def switch(h, mesh, T=1e-4):
+@torch.jit.script
+def switch(h: torch.Tensor, mesh: torch.Tensor, T: float = 1e-4) -> torch.Tensor:
     # note that + T is needed to satisfy boundary conditions (creating a bit of delay
     # before the flip starts happening
     return 1.0 + torch.tanh((h - mesh - 0 * T) / abs(T))
 
 
-def get_current(current_state, current_field, n_mesh_points, **tkwargs):
+@torch.jit.script
+def get_current(
+        current_state: torch.Tensor | None,
+        current_field: torch.Tensor | None,
+        n_mesh_points: int,
+        dtype: torch.dtype = torch.float64,
+) -> tuple[torch.Tensor, torch.Tensor]:
     # list of hysteresis states with initial state set
     if current_state is None:
-        initial_state = torch.ones(n_mesh_points, **tkwargs) * -1.0
+        initial_state = torch.ones(n_mesh_points, dtype=dtype) * -1.0
         initial_field = torch.zeros(1)
     else:
         if not isinstance(current_field, torch.Tensor):
-            raise ValueError("need to specify current field if state is given")
+            msg = "need to specify current field if state is given"
+            raise ValueError(msg)
         if current_state.shape[-1] != n_mesh_points:
-            raise ValueError("curret state must match number of mesh points")
+            msg = "curret state must match number of mesh points"
+            raise ValueError(msg)
         initial_state = current_state
         initial_field = current_field
+
     return initial_state, initial_field
 
 
+@torch.jit.script
+def sweep_up(
+        h: torch.Tensor,
+        mesh: torch.Tensor,
+        initial_state: torch.Tensor,
+        T: float = 1e-2,
+) -> torch.Tensor:
+    return torch.minimum(
+        initial_state + switch(h, mesh[:, 1], T), torch.ones_like(mesh[:, 1])
+    )
+
+
+@torch.jit.script
+def sweep_left(
+        h: torch.Tensor,
+        mesh: torch.Tensor,
+        initial_state: torch.Tensor,
+        T: float = 1e-2,
+) -> torch.Tensor:
+    return torch.maximum(
+        initial_state - switch(mesh[:, 0], h, T),
+        torch.ones_like(mesh[:, 0]) * -1.0,
+        )
+
+
 def predict_batched_state(
-    h,
-    mesh_points,
-    current_state=None,
-    current_field=None,
-    tkwargs=None,
-    temp=1e-3,
-):
+        h: torch.Tensor,
+        mesh_points: torch.Tensor,
+        current_state: torch.Tensor | None = None,
+        current_field: torch.Tensor | None = None,
+        tkwargs: dict[str, typing.Any] | None = None,
+        temp: float = 1e-3,
+) -> torch.Tensor:
     """
     Speed up optimization by calculating a batched future state given a batch of h
     values.
@@ -66,22 +93,22 @@ def predict_batched_state(
 
     state, field = get_current(current_state, current_field, n_mesh_points, **tkwargs)
 
-    result = torch.where(
+    return torch.where(
         torch.greater_equal(h - field, torch.zeros(1).to(h)),
         sweep_up(h, mesh_points, state, temp),
         sweep_left(h, mesh_points, state, temp),
     )
-    return result
 
 
+@torch.jit.script
 def get_states(
-    h: torch.Tensor,
-    mesh_points: torch.Tensor,
-    current_state: torch.Tensor = None,
-    current_field: torch.Tensor = None,
-    tkwargs=None,
-    temp=1e-3,
-):
+        h: torch.Tensor,
+        mesh_points: torch.Tensor,
+        current_state: torch.Tensor | None = None,
+        current_field: torch.Tensor | None = None,
+        temp: float = 1e-3,
+        dtype: torch.dtype = torch.float64,
+) -> torch.Tensor:
     """
     Returns magnetic hysteresis state as an m x n x n tensor, where
     m is the number of distinct applied magnetic fields. The
@@ -120,17 +147,17 @@ def get_states(
     # verify the inputs are in the normalized region within some machine epsilon
     epsilon = 1e-6
     if torch.any(torch.less(h + epsilon, torch.zeros(1))) or torch.any(
-        torch.greater(h - epsilon, torch.ones(1))
+            torch.greater(h - epsilon, torch.ones(1))
     ):
-        raise RuntimeError("applied values are outside of the unit domain")
+        msg = "applied values are outside of the unit domain"
+        raise RuntimeError(msg)
 
     assert len(h.shape) == 1
     n_mesh_points = mesh_points.shape[0]
-    tkwargs = tkwargs or {}
 
     # list of hysteresis states with initial state set
     initial_state, initial_field = get_current(
-        current_state, current_field, n_mesh_points, **tkwargs
+        current_state, current_field, n_mesh_points, dtype=dtype
     )
 
     states = []
@@ -158,5 +185,4 @@ def get_states(
             states += [states[i - 1]]
 
     # concatenate states into one tensor
-    total_states = torch.cat([ele.unsqueeze(0) for ele in states])
-    return total_states
+    return torch.cat([ele.unsqueeze(0) for ele in states])

@@ -1,14 +1,27 @@
+from __future__ import annotations
+
 import logging
+import typing
 from copy import deepcopy
 
 import torch
 
-from hysteresis.modes import FITTING
+from .modes import FITTING
 
-logger = logging.getLogger(__name__)
+if typing.TYPE_CHECKING:
+    from .base import BaseHysteresis
+
+log = logging.getLogger(__name__)
 
 
-def train_MSE(model: torch.nn.Module, train_x, train_y, n_steps, lr=0.1, atol=1.0e-8):
+def train_MSE(
+        model: torch.nn.Module,
+        train_x: torch.Tensor,
+        train_y: torch.Tensor,
+        n_steps: int,
+        lr: float = 0.1,
+        atol: float = 1.0e-8,
+) -> torch.Tensor:
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     loss_track = []
@@ -17,10 +30,10 @@ def train_MSE(model: torch.nn.Module, train_x, train_y, n_steps, lr=0.1, atol=1.
     for i in range(n_steps):
         optimizer.zero_grad()
         output = model(train_x)
-        loss = torch.nn.MSELoss()(train_y, output)
+        loss: torch.Tensor = torch.nn.MSELoss()(train_y, output)
         loss.backward()
 
-        loss_track += [loss]
+        loss_track += [loss.item()]
         min_loss = torch.min(torch.tensor(loss_track))
         if min_loss < atol:
             break
@@ -31,13 +44,15 @@ def train_MSE(model: torch.nn.Module, train_x, train_y, n_steps, lr=0.1, atol=1.
 
         optimizer.step()
         if i % 1000 == 0:
-            print(i)
+            log.info(f"step: {i}, loss: {loss.item()}")
 
     model.load_state_dict(best_state)
     return torch.tensor(loss_track)
 
 
-def train_hysteresis(model, n_steps, lr=0.1, atol=1e-8):
+def train_hysteresis(
+        model: BaseHysteresis, n_steps: int, lr: float = 0.1, atol: float = 1e-8
+) -> torch.Tensor:
     model.mode = FITTING
     train_x = model.history_h
     train_y = model.transformer.transform(model.history_h, model.history_m)[1]
